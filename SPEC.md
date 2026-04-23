@@ -1,6 +1,7 @@
 # リアルタイム車両位置表示アプリ 詳細仕様書
 
 **作成日**: 2026-04-23  
+**更新日**: 2026-04-24  
 **目的**: Zustand / WebSocket / Leaflet の実践学習
 
 ---
@@ -14,6 +15,7 @@
 | 言語                      | TypeScript                   | 5.x                               |
 | 状態管理                  | Zustand                      | 4.x                               |
 | 地図                      | Leaflet + react-leaflet      | leaflet 1.9.x / react-leaflet 4.x |
+| スタイリング              | Tailwind CSS                 | 3.x                               |
 | WebSocket（クライアント） | ブラウザ標準 `WebSocket` API | -                                 |
 | WebSocket（サーバー）     | ws ライブラリ                | 8.x                               |
 | サーバー実行              | tsx                          | 4.x                               |
@@ -34,6 +36,8 @@ vehicle-demo/
 │   ├── components/
 │   │   ├── VehicleMap.tsx       # Leaflet地図
 │   │   └── VehicleList.tsx      # 車両一覧パネル
+│   ├── constants/
+│   │   └── vehicles.ts          # 車両カラー定数
 │   ├── types/
 │   │   └── vehicle.ts           # 共通型定義
 │   └── App.tsx
@@ -57,7 +61,21 @@ export type VehiclePosition = {
 
 ---
 
-## 4. モックサーバー仕様（`server/mock-server.ts`）
+## 4. 車両カラー定数（`src/constants/vehicles.ts`）
+
+```ts
+export const VEHICLE_COLORS: Record<string, string> = {
+  "vehicle-01": "#2563EB", // 青
+  "vehicle-02": "#DC2626", // 赤
+  "vehicle-03": "#16A34A", // 緑
+};
+```
+
+- `VehicleList` と `VehicleMap` の両方から参照する
+
+---
+
+## 5. モックサーバー仕様（`server/mock-server.ts`）
 
 ### 概要
 
@@ -67,11 +85,13 @@ export type VehiclePosition = {
 
 ### 管理車両
 
-| vehicleId  | 初期緯度 | 初期経度 |
-| ---------- | -------- | -------- |
-| vehicle-01 | 35.6895  | 139.6917 |
-| vehicle-02 | 35.6800  | 139.7000 |
-| vehicle-03 | 35.7000  | 139.7100 |
+| vehicleId  | 初期緯度 | 初期経度  |
+| ---------- | -------- | --------- |
+| vehicle-01 | 35.1815  | 136.9066  |
+| vehicle-02 | 35.1700  | 136.9150  |
+| vehicle-03 | 35.1950  | 136.8950  |
+
+（名古屋市周辺）
 
 ### 送信ロジック
 
@@ -91,9 +111,9 @@ export type VehiclePosition = {
 ```json
 {
   "vehicleId": "vehicle-01",
-  "lat": 35.6897,
-  "lng": 139.6914,
-  "timestamp": "2026-04-23T10:00:01.000Z"
+  "lat": 35.1817,
+  "lng": 136.9063,
+  "timestamp": "2026-04-24T01:00:01.000Z"
 }
 ```
 
@@ -104,7 +124,7 @@ export type VehiclePosition = {
 
 ---
 
-## 5. Zustand Store仕様（`src/store/positionStore.ts`）
+## 6. Zustand Store仕様（`src/store/positionStore.ts`）
 
 ```ts
 type PositionStore = {
@@ -113,12 +133,13 @@ type PositionStore = {
 };
 ```
 
-- `setPosition` は `positions` に `vehicleId` をキーとして upsert する
+- `setPosition` は `positions` の `Map` をコピーして `vehicleId` をキーに upsert し、新しい参照を返す
+- 新しい参照を返すことで、購読コンポーネントの再レンダリングがトリガーされる
 - 初期値: `positions = new Map()`
 
 ---
 
-## 6. WebSocket接続フック仕様（`src/hooks/useVehicleWebSocket.ts`）
+## 7. WebSocket接続フック仕様（`src/hooks/useVehicleWebSocket.ts`）
 
 ```ts
 export function useVehicleWebSocket(): void;
@@ -130,16 +151,17 @@ export function useVehicleWebSocket(): void;
 - `onclose`: `console.log('WebSocket closed')` を出力
 - `onerror`: `console.error(error)` を出力
 - アンマウント時: `ws.close()` でクリーンアップ
+- 依存配列: `[updateVehicle]`（store の参照が変わった場合に再接続）
 - 再接続ロジック: なし（切断したらそのまま）
 
 ---
 
-## 7. コンポーネント仕様
+## 8. コンポーネント仕様
 
-### 7-1. App.tsx
+### 8-1. App.tsx
 
 - `useVehicleWebSocket()` をトップレベルで1回呼ぶ（WebSocket接続を確立）
-- 以下のレイアウトを描画する
+- Tailwind CSS で以下のレイアウトを描画する
 
 ```
 ┌──────────────────────────────────────────────────────┐
@@ -147,13 +169,17 @@ export function useVehicleWebSocket(): void;
 ├──────────────────┬───────────────────────────────────┤
 │  VehicleList     │  VehicleMap                       │
 │  （左パネル）     │  （右：地図）                      │
-│  幅: 280px       │  幅: 残り全部                      │
+│  幅: w-70（280px）│  幅: 残り全部（flex-1）            │
 └──────────────────┴───────────────────────────────────┘
 ```
 
-- レイアウトは CSS Flexbox で実装（外部CSSライブラリ不使用）
+- 外側: `flex flex-col h-screen`
+- ヘッダー: `px-4 py-2 border-b`
+- コンテンツ行: `flex flex-1 overflow-hidden`
+- 左パネル (`<aside>`): `w-70 shrink-0 overflow-y-auto border-r`
+- 右エリア (`<main>`): `flex-1`
 
-### 7-2. VehicleList.tsx
+### 8-2. VehicleList.tsx
 
 Zustand の `positions` を `Array.from` で配列化して表示。
 
@@ -168,44 +194,44 @@ Zustand の `positions` を `Array.from` で配列化して表示。
 
 - データが来るたびにリアルタイムで再描画
 - 車両は `vehicleId` の昇順でソートして表示
+- `VEHICLE_COLORS` を参照し、車両ごとに色分けしたカードで表示
+  - カード左ボーダー: 車両色
+  - カード背景: 車両色 + 透明度（`color + "18"`）
+  - 車両ID文字色: 車両色
 
-### 7-3. VehicleMap.tsx
+### 8-3. VehicleMap.tsx
 
 - `react-leaflet` の `MapContainer` / `TileLayer` / `Marker` / `Popup` を使用
 - タイルレイヤー: OpenStreetMap（`https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png`）
-- 初期表示: 緯度 `35.6895` / 経度 `139.6917` / ズーム `13`
+- 初期表示: 緯度 `35.1815` / 経度 `136.9066` / ズーム `13`（名古屋市周辺）
 - Zustand の `positions` を参照し、全車両分の `Marker` を描画
 - `Marker` の `Popup` には `vehicleId` を表示
 - `position` が空（Map サイズ 0）の場合はマーカーなし（地図は表示）
-- **Leaflet のデフォルトアイコン欠損対策**を実装（詳細は下記注意事項を参照）
 
-> **[注意] Leaflet デフォルトアイコン欠損問題**  
-> react-leaflet を Vite（Webpack 含む）でバンドルすると、Leaflet が内部で参照する  
-> マーカーアイコン画像（`marker-icon.png` / `marker-shadow.png`）のパスが壊れ、  
-> マーカーが表示されない既知の問題がある。
->
-> **原因**: Leaflet が `L.Icon.Default.prototype._getIconUrl` でアイコンURLを解決する際、  
-> バンドラーの asset hashing によってパスが一致しなくなる。
->
-> **対策**: `VehicleMap.tsx` の先頭で以下の workaround を実行する。
->
-> ```ts
-> import L from "leaflet";
-> import iconUrl from "leaflet/dist/images/marker-icon.png";
-> import iconRetinaUrl from "leaflet/dist/images/marker-icon-2x.png";
-> import shadowUrl from "leaflet/dist/images/marker-shadow.png";
->
-> // [workaround] Viteバンドル時にLeafletのデフォルトアイコンパスが壊れる問題の回避
-> // 参照: https://github.com/Leaflet/Leaflet/issues/4968
-> delete (L.Icon.Default.prototype as any)._getIconUrl;
-> L.Icon.Default.mergeOptions({ iconUrl, iconRetinaUrl, shadowUrl });
-> ```
->
-> この処理はアプリ起動時に1回だけ実行すればよいため、`VehicleMap.tsx` のモジュールスコープに記述する。
+**マーカーアイコン**:
+
+Leaflet のデフォルトアイコン（`marker-icon.png`）は使用しない。  
+`L.divIcon` + インライン SVG で車両色のカスタムピンを生成する。
+
+```ts
+function createColoredIcon(color: string): L.DivIcon {
+  const svg = `<svg ...><path fill="${color}" .../><circle .../></svg>`;
+  return L.divIcon({
+    html: svg,
+    className: "",
+    iconSize: [25, 41],
+    iconAnchor: [12, 41],
+    popupAnchor: [0, -41],
+  });
+}
+```
+
+- `VEHICLE_COLORS` から車両色を取得し、未定義の場合は `#6B7280`（グレー）をフォールバックとして使用
+- この方式により、Vite バンドル時の Leaflet デフォルトアイコンパス欠損問題を根本回避している
 
 ---
 
-## 8. package.json スクリプト
+## 9. package.json スクリプト
 
 ```json
 {
@@ -226,20 +252,20 @@ Zustand の `positions` を `Array.from` で配列化して表示。
 
 ---
 
-## 9. 動作確認の定義（完了条件）
+## 10. 動作確認の定義（完了条件）
 
 | 確認項目         | 期待する動作                                            |
 | ---------------- | ------------------------------------------------------- |
 | 地図表示         | OpenStreetMap タイルが表示される                        |
-| マーカー表示     | 3台分のマーカーが地図上に表示される                     |
+| マーカー表示     | 3台分のカラーピンが地図上に表示される                   |
 | リアルタイム移動 | 1秒ごとにマーカー位置が更新される                       |
 | 車両一覧         | 左パネルに3台の座標・同期時刻がリアルタイムで更新される |
-| コンソール       | 受信データが `console.log` で確認できる                 |
+| 色分け           | 車両ごとにピン色とリストカード色が一致している          |
 | クリーンアップ   | ブラウザタブを閉じると WebSocket が切断される           |
 
 ---
 
-## 10. スコープ外（今回実装しない）
+## 11. スコープ外（今回実装しない）
 
 - WebSocket 再接続ロジック
 - エラー画面・ローディング表示

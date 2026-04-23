@@ -1,9 +1,17 @@
-import { useVehicleWebSocket } from './hooks/useVehicleWebSocket'
-import { VehicleList } from './components/VehicleList'
-import { VehicleMap } from './components/VehicleMap'
+import { useVehicleWebSocket } from "./hooks/useVehicleWebSocket";
+import { VehicleList } from "./components/VehicleList";
+import { VehicleMap } from "./components/VehicleMap";
 
-function App() {
-  useVehicleWebSocket()
+// ---------------------------------------------------
+// コンポーネントの関係
+// ・useVehicleWebSocket -> ws受信結果で zustandのストアを書き換え
+// ・ストアを利用するコンポーネントが自動で再レンダリング
+//     対象： VehicleList、VehicleMap
+//   (Propsのバケツリレー不要)
+// ---------------------------------------------------
+export default function App() {
+  // WebSocketで車両位置を継続して受信
+  useVehicleWebSocket();
 
   return (
     <div className="flex flex-col h-screen">
@@ -19,7 +27,5 @@ function App() {
         </main>
       </div>
     </div>
-  )
+  );
 }
-
-export default App
