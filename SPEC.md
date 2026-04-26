@@ -1,8 +1,8 @@
 # リアルタイム車両位置表示アプリ 詳細仕様書
 
 **作成日**: 2026-04-23  
-**更新日**: 2026-04-24  
-**目的**: Zustand / WebSocket / Leaflet の実践学習
+**更新日**: 2026-04-27  
+**目的**: Zustand / WebSocket / Leaflet / React Router / Code Splitting の実践学習
 
 ---
 
@@ -14,6 +14,7 @@
 | ビルドツール              | Vite                         | 8.x                               |
 | 言語                      | TypeScript                   | 6.x                               |
 | 状態管理                  | Zustand                      | 5.x                               |
+| ルーティング              | react-router-dom             | 7.x                               |
 | 地図                      | Leaflet + react-leaflet      | leaflet 1.9.x / react-leaflet 5.x |
 | スタイリング              | Tailwind CSS                 | 4.x                               |
 | WebSocket（クライアント） | ブラウザ標準 `WebSocket` API | -                                 |
@@ -29,11 +30,16 @@ vehicle-demo/
 ├── server/
 │   └── mock-server.ts           # モックWebSocketサーバー
 ├── src/
+│   ├── pages/
+│   │   ├── LandingPage.tsx      # トップページ
+│   │   ├── VehiclesPage.tsx     # 車両表示ページ
+│   │   └── AboutPage.tsx        # 概要ページ
 │   ├── store/
 │   │   └── positionStore.ts     # Zustand store
 │   ├── hooks/
 │   │   └── useVehicleWebSocket.ts
 │   ├── components/
+│   │   ├── NavBar.tsx           # 全ページ共通ヘッダー
 │   │   ├── VehicleMap.tsx       # Leaflet地図
 │   │   └── VehicleList.tsx      # 車両一覧パネル
 │   ├── constants/
@@ -85,11 +91,11 @@ export const VEHICLE_COLORS: Record<string, string> = {
 
 ### 管理車両
 
-| vehicleId  | 初期緯度 | 初期経度  |
-| ---------- | -------- | --------- |
-| vehicle-01 | 35.1815  | 136.9066  |
-| vehicle-02 | 35.1700  | 136.9150  |
-| vehicle-03 | 35.1950  | 136.8950  |
+| vehicleId  | 初期緯度 | 初期経度 |
+| ---------- | -------- | -------- |
+| vehicle-01 | 35.1815  | 136.9066 |
+| vehicle-02 | 35.1700  | 136.9150 |
+| vehicle-03 | 35.1950  | 136.8950 |
 
 （名古屋市周辺）
 
@@ -156,30 +162,92 @@ export function useVehicleWebSocket(): void;
 
 ---
 
-## 8. コンポーネント仕様
+## 8. ルーティング仕様
 
-### 8-1. App.tsx
+### ルート定義
 
-- `useVehicleWebSocket()` をトップレベルで1回呼ぶ（WebSocket接続を確立）
-- Tailwind CSS で以下のレイアウトを描画する
+| パス        | コンポーネント | 説明                                     |
+| ----------- | -------------- | ---------------------------------------- |
+| `/`         | `LandingPage`  | 学習用デモであることを示すランディングページ |
+| `/vehicles` | `VehiclesPage` | リアルタイム車両表示                     |
+| `/about`    | `AboutPage`    | このデモの概要・技術スタック説明         |
+| その他      | `<Navigate>`   | `/` へリダイレクト                       |
+
+### コード分割
+
+- `LandingPage` / `AboutPage` は eager import（軽量なため分割対象外）
+- `VehiclesPage` のみ `React.lazy` で遅延ロード
+  - Leaflet / react-leaflet など重いライブラリを含むため、初回バンドルから除外する効果が大きい
+  - `/vehicles` への初回遷移時にチャンクをフェッチ、再遷移時はキャッシュ済みのため再フェッチなし
+
+---
+
+## 9. コンポーネント仕様
+
+### 9-1. App.tsx
+
+ルーティング定義のみを担う。WebSocket 接続は持たない。
+
+```tsx
+// VehiclesPage のみ遅延ロード
+const VehiclesPage = lazy(() => import("./pages/VehiclesPage"));
+
+<BrowserRouter>
+  <div className="flex flex-col h-screen">
+    <NavBar />
+    <div className="flex-1 overflow-y-auto">
+      <Suspense fallback={<div className="flex h-full items-center justify-center">Loading...</div>}>
+        <Routes>
+          <Route path="/" element={<LandingPage />} />
+          <Route path="/vehicles" element={<VehiclesPage />} />
+          <Route path="/about" element={<AboutPage />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </Suspense>
+    </div>
+  </div>
+</BrowserRouter>
+```
+
+- `<Suspense>` は `<Routes>` 全体を包む
+- フォールバックは `/vehicles` への初回遷移時のみ表示される
+
+### 9-2. NavBar.tsx
+
+- 全ページ共通で最上段に表示
+- リンク: `ホーム` / `車両表示` / `About`
+- `<NavLink>` を使用し、現在ページのリンクをアクティブスタイルで強調
+  - アクティブ: 下線 + 文字色変化
+
+### 9-3. LandingPage.tsx
+
+- 「学習用デモ」と明示するシンプルなヒーローセクション
+- 表示内容: タイトル / サブタイトル（使用技術の列挙） / 「車両表示を見る」ボタン（`/vehicles` へ遷移）
+
+### 9-4. AboutPage.tsx
+
+- このプロジェクトの学習目的・技術スタックを簡潔に説明するページ
+- 表示内容: 目的の説明 / 技術スタック一覧（Zustand / WebSocket / Leaflet / React Router）
+
+### 9-5. VehiclesPage.tsx
+
+- `useVehicleWebSocket()` をマウント時に1回呼ぶ
+  - `/vehicles` に遷移したときだけ WebSocket 接続が確立される
+  - `/vehicles` から離脱（アンマウント）すると接続がクリーンアップされる
 
 ```
 ┌──────────────────────────────────────────────────────┐
-│  リアルタイム車両位置表示                               │
-├──────────────────┬───────────────────────────────────┤
 │  VehicleList     │  VehicleMap                       │
 │  （左パネル）     │  （右：地図）                      │
 │  幅: w-70（280px）│  幅: 残り全部（flex-1）            │
 └──────────────────┴───────────────────────────────────┘
 ```
 
-- 外側: `flex flex-col h-screen`
-- ヘッダー: `px-4 py-2 border-b`
-- コンテンツ行: `flex flex-1 overflow-hidden`
+- 外側: `flex h-full`
 - 左パネル (`<aside>`): `w-70 shrink-0 overflow-y-auto border-r`
 - 右エリア (`<main>`): `flex-1`
 
-### 8-2. VehicleList.tsx
+### 9-6. VehicleList.tsx
 
 Zustand の `positions` を `Array.from` で配列化して表示。
 
@@ -199,7 +267,7 @@ Zustand の `positions` を `Array.from` で配列化して表示。
   - カード背景: 車両色 + 透明度（`color + "18"`）
   - 車両ID文字色: 車両色
 
-### 8-3. VehicleMap.tsx
+### 9-7. VehicleMap.tsx
 
 - `react-leaflet` の `MapContainer` / `TileLayer` / `Marker` / `Popup` を使用
 - タイルレイヤー: OpenStreetMap（`https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png`）
@@ -231,7 +299,7 @@ function createColoredIcon(color: string): L.DivIcon {
 
 ---
 
-## 9. package.json スクリプト
+## 10. package.json スクリプト
 
 ```json
 {
@@ -252,92 +320,29 @@ function createColoredIcon(color: string): L.DivIcon {
 
 ---
 
-## 10. 動作確認の定義（完了条件）
+## 11. 動作確認の定義（完了条件）
 
-| 確認項目         | 期待する動作                                            |
-| ---------------- | ------------------------------------------------------- |
-| 地図表示         | OpenStreetMap タイルが表示される                        |
-| マーカー表示     | 3台分のカラーピンが地図上に表示される                   |
-| リアルタイム移動 | 1秒ごとにマーカー位置が更新される                       |
-| 車両一覧         | 左パネルに3台の座標・同期時刻がリアルタイムで更新される |
-| 色分け           | 車両ごとにピン色とリストカード色が一致している          |
-| クリーンアップ   | ブラウザタブを閉じると WebSocket が切断される           |
+| 確認項目             | 期待する動作                                                         |
+| -------------------- | -------------------------------------------------------------------- |
+| ルーティング         | `/` / `/vehicles` / `/about` それぞれのページが表示される           |
+| 不正URL              | 未定義パスは `/` へリダイレクトされる                               |
+| ナビゲーション       | NavBar の現在ページリンクがアクティブスタイルで強調される           |
+| コード分割           | 初回ロード時 Network タブに VehiclesPage チャンクが含まれない       |
+| 遅延ロード           | `/vehicles` 初回遷移時に VehiclesPage チャンクがフェッチされる      |
+| WebSocket 接続       | `/vehicles` 遷移時に WebSocket が接続される                         |
+| WebSocket 切断       | `/vehicles` から離脱すると WebSocket が切断される                   |
+| 地図表示             | OpenStreetMap タイルが表示される                                    |
+| マーカー表示         | 3台分のカラーピンが地図上に表示される                               |
+| リアルタイム移動     | 1秒ごとにマーカー位置が更新される                                   |
+| 車両一覧             | 左パネルに3台の座標・同期時刻がリアルタイムで更新される             |
+| 色分け               | 車両ごとにピン色とリストカード色が一致している                      |
 
 ---
 
-## 11. スコープ外（今回実装しない）
+## 12. スコープ外（今回実装しない）
 
 - WebSocket 再接続ロジック
-- エラー画面・ローディング表示
+- エラー画面
 - 車両の走行履歴（軌跡）表示
 - 認証・セキュリティ
 - テスト
-
----
-
-## 12. ルーティング仕様（React Router v6）
-
-### 目的
-
-React Router v6 の基本パターンを実践学習する。
-
-### 使用ライブラリ
-
-- `react-router-dom` v7.x
-
-### ルート定義
-
-| パス        | コンポーネント    | 説明                                  |
-| ----------- | ---------------- | ------------------------------------- |
-| `/`         | `LandingPage`    | 学習用デモであることを示すランディングページ |
-| `/vehicles` | 既存の車両表示   | 現在のトップページをそのまま移動        |
-| `/about`    | `AboutPage`      | このデモの概要・技術スタック説明        |
-| その他      | `<Navigate>`     | `/` へリダイレクト                    |
-
-### ナビゲーションバー（`NavBar.tsx`）
-
-- 全ページ共通で最上段に表示
-- リンク: `ホーム` / `車両表示` / `About`
-- `<NavLink>` を使用し、現在ページのリンクをアクティブスタイルで強調
-  - アクティブ: 下線 + 文字色変化（`aria-[aria-current=page]` または `isActive` コールバック）
-
-### コンポーネント構成
-
-```
-src/
-├── pages/
-│   ├── LandingPage.tsx   # 新規
-│   └── AboutPage.tsx     # 新規
-├── components/
-│   ├── NavBar.tsx        # 新規（全ページ共通ヘッダー）
-│   ├── VehicleMap.tsx    # 既存（変更なし）
-│   └── VehicleList.tsx   # 既存（変更なし）
-└── App.tsx               # ルート定義を追加
-```
-
-### App.tsx の構造
-
-```tsx
-<BrowserRouter>
-  <NavBar />
-  <Routes>
-    <Route path="/" element={<LandingPage />} />
-    <Route path="/vehicles" element={<VehiclesPage />} />
-    <Route path="/about" element={<AboutPage />} />
-    <Route path="*" element={<Navigate to="/" replace />} />
-  </Routes>
-</BrowserRouter>
-```
-
-- 車両表示ページのレイアウト（`flex flex-col h-screen`）は `/vehicles` ルート内で完結させる
-- NavBar の高さ分、車両表示ページの `h-screen` を調整する（`h-[calc(100vh-NavBarの高さ)]` など）
-
-### LandingPage 仕様
-
-- 「学習用デモ」と明示するシンプルなヒーローセクション
-- 表示内容: タイトル / サブタイトル（使用技術の列挙） / 「車両表示を見る」ボタン（`/vehicles` へ遷移）
-
-### AboutPage 仕様
-
-- このプロジェクトの学習目的・技術スタックを簡潔に説明するページ
-- 表示内容: 目的の説明 / 技術スタック一覧（Zustand / WebSocket / Leaflet / React Router）

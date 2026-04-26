@@ -11,20 +11,27 @@ const techStack = [
 
 export default function AboutPage() {
   return (
+    // max-w-xl 最大幅を xl(約576px) に制限（それ以上広げない）
+    // mx-auto 横方向 中央寄せ
     <div className="max-w-xl mx-auto py-12 px-6">
       <h1 className="text-2xl font-bold text-gray-800 mb-2">About</h1>
       <p className="text-gray-500 text-sm mb-8">
-        このアプリは React / TypeScript のネイティブな使い方を学ぶための学習用デモです。
-        モックサーバーが WebSocket で車両位置を送信し、地図上にリアルタイム表示します。
+        このアプリは React / TypeScript
+        のネイティブな使い方を学ぶための学習用デモです。 モックサーバーが
+        WebSocket で車両位置を送信し、地図上にリアルタイム表示します。
       </p>
-      <h2 className="text-base font-semibold text-gray-700 mb-3">技術スタック</h2>
+      <h2 className="text-base font-semibold text-gray-700 mb-3">
+        技術スタック
+      </h2>
       <ul>
         {techStack.map(({ name, desc }, i) => (
           <li
             key={name}
             className={`flex items-start gap-3 text-sm px-2 py-2 rounded ${i % 2 === 0 ? "bg-gray-200" : ""}`}
           >
-            <span className="font-medium text-gray-800 w-48 shrink-0">{name}</span>
+            <span className="font-medium text-gray-800 w-48 shrink-0">
+              {name}
+            </span>
             <span className="text-gray-500">{desc}</span>
           </li>
         ))}

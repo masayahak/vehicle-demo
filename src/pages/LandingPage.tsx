@@ -16,6 +16,17 @@ export default function LandingPage() {
           Zustand / WebSocket / Leaflet / React Router を使った SPA デモ
         </p>
       </div>
+
+      {/* ------------------------------------------------------------
+        NavLinkを使わずに buttonを使う理由
+        NavLinkは isActiveを判定するが、ここでは一方通行の画面遷移を要求してるだけなので
+        ボタンで実装が自然
+        --------------------------------------------------------------
+        テキストリンク（青字下線）→ 文章中の補足・参照
+        ボタン                    → アクション（送信・移動・実行）
+        カード・画像              → コンテンツへの導線
+      ---------------------------------------------------------------- */}
+      {/* transition-colors： hover 時の色変更をアニメーション */}
       <button
         onClick={() => navigate("/vehicles")}
         className="px-6 py-3 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
