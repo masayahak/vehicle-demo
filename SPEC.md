@@ -10,12 +10,12 @@
 
 | 役割                      | 技術                         | バージョン                        |
 | ------------------------- | ---------------------------- | --------------------------------- |
-| フロントエンド            | React SPA                    | 18.x                              |
-| ビルドツール              | Vite                         | 5.x                               |
-| 言語                      | TypeScript                   | 5.x                               |
-| 状態管理                  | Zustand                      | 4.x                               |
-| 地図                      | Leaflet + react-leaflet      | leaflet 1.9.x / react-leaflet 4.x |
-| スタイリング              | Tailwind CSS                 | 3.x                               |
+| フロントエンド            | React SPA                    | 19.x                              |
+| ビルドツール              | Vite                         | 8.x                               |
+| 言語                      | TypeScript                   | 6.x                               |
+| 状態管理                  | Zustand                      | 5.x                               |
+| 地図                      | Leaflet + react-leaflet      | leaflet 1.9.x / react-leaflet 5.x |
+| スタイリング              | Tailwind CSS                 | 4.x                               |
 | WebSocket（クライアント） | ブラウザ標準 `WebSocket` API | -                                 |
 | WebSocket（サーバー）     | ws ライブラリ                | 8.x                               |
 | サーバー実行              | tsx                          | 4.x                               |
@@ -272,3 +272,72 @@ function createColoredIcon(color: string): L.DivIcon {
 - 車両の走行履歴（軌跡）表示
 - 認証・セキュリティ
 - テスト
+
+---
+
+## 12. ルーティング仕様（React Router v6）
+
+### 目的
+
+React Router v6 の基本パターンを実践学習する。
+
+### 使用ライブラリ
+
+- `react-router-dom` v7.x
+
+### ルート定義
+
+| パス        | コンポーネント    | 説明                                  |
+| ----------- | ---------------- | ------------------------------------- |
+| `/`         | `LandingPage`    | 学習用デモであることを示すランディングページ |
+| `/vehicles` | 既存の車両表示   | 現在のトップページをそのまま移動        |
+| `/about`    | `AboutPage`      | このデモの概要・技術スタック説明        |
+| その他      | `<Navigate>`     | `/` へリダイレクト                    |
+
+### ナビゲーションバー（`NavBar.tsx`）
+
+- 全ページ共通で最上段に表示
+- リンク: `ホーム` / `車両表示` / `About`
+- `<NavLink>` を使用し、現在ページのリンクをアクティブスタイルで強調
+  - アクティブ: 下線 + 文字色変化（`aria-[aria-current=page]` または `isActive` コールバック）
+
+### コンポーネント構成
+
+```
+src/
+├── pages/
+│   ├── LandingPage.tsx   # 新規
+│   └── AboutPage.tsx     # 新規
+├── components/
+│   ├── NavBar.tsx        # 新規（全ページ共通ヘッダー）
+│   ├── VehicleMap.tsx    # 既存（変更なし）
+│   └── VehicleList.tsx   # 既存（変更なし）
+└── App.tsx               # ルート定義を追加
+```
+
+### App.tsx の構造
+
+```tsx
+<BrowserRouter>
+  <NavBar />
+  <Routes>
+    <Route path="/" element={<LandingPage />} />
+    <Route path="/vehicles" element={<VehiclesPage />} />
+    <Route path="/about" element={<AboutPage />} />
+    <Route path="*" element={<Navigate to="/" replace />} />
+  </Routes>
+</BrowserRouter>
+```
+
+- 車両表示ページのレイアウト（`flex flex-col h-screen`）は `/vehicles` ルート内で完結させる
+- NavBar の高さ分、車両表示ページの `h-screen` を調整する（`h-[calc(100vh-NavBarの高さ)]` など）
+
+### LandingPage 仕様
+
+- 「学習用デモ」と明示するシンプルなヒーローセクション
+- 表示内容: タイトル / サブタイトル（使用技術の列挙） / 「車両表示を見る」ボタン（`/vehicles` へ遷移）
+
+### AboutPage 仕様
+
+- このプロジェクトの学習目的・技術スタックを簡潔に説明するページ
+- 表示内容: 目的の説明 / 技術スタック一覧（Zustand / WebSocket / Leaflet / React Router）

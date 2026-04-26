@@ -1,31 +1,23 @@
-import { useVehicleWebSocket } from "./hooks/useVehicleWebSocket";
-import { VehicleList } from "./components/VehicleList";
-import { VehicleMap } from "./components/VehicleMap";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import NavBar from "./components/NavBar";
+import LandingPage from "./pages/LandingPage";
+import VehiclesPage from "./pages/VehiclesPage";
+import AboutPage from "./pages/AboutPage";
 
-// ---------------------------------------------------
-// コンポーネントの関係
-// ・useVehicleWebSocket -> ws受信結果で zustandのストアを書き換え
-// ・ストアを利用するコンポーネントが自動で再レンダリング
-//     対象： VehicleList、VehicleMap
-//   (Propsのバケツリレー不要)
-// ---------------------------------------------------
 export default function App() {
-  // WebSocketで車両位置を継続して受信
-  useVehicleWebSocket();
-
   return (
-    <div className="flex flex-col h-screen">
-      <header className="px-4 py-2 border-b border-gray-300 bg-gray-100">
-        <h1 className="text-lg font-medium">リアルタイム車両位置表示</h1>
-      </header>
-      <div className="flex flex-1 overflow-hidden">
-        <aside className="w-70 shrink-0 overflow-y-auto border-r border-gray-300">
-          <VehicleList />
-        </aside>
-        <main className="flex-1">
-          <VehicleMap />
-        </main>
+    <BrowserRouter>
+      <div className="flex flex-col h-screen">
+        <NavBar />
+        <div className="flex-1 overflow-hidden">
+          <Routes>
+            <Route path="/" element={<LandingPage />} />
+            <Route path="/vehicles" element={<VehiclesPage />} />
+            <Route path="/about" element={<AboutPage />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </div>
       </div>
-    </div>
+    </BrowserRouter>
   );
 }
