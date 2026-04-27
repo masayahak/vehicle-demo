@@ -1,7 +1,7 @@
 # リアルタイム車両位置表示アプリ 詳細仕様書
 
 **作成日**: 2026-04-23  
-**更新日**: 2026-04-27  
+**更新日**: 2026-04-28  
 **目的**: Zustand / WebSocket / Leaflet / React Router / Code Splitting の実践学習
 
 ---
@@ -40,6 +40,7 @@ vehicle-demo/
 │   │   └── useVehicleWebSocket.ts
 │   ├── components/
 │   │   ├── NavBar.tsx           # 全ページ共通ヘッダー
+│   │   ├── ConnectionStatusBar.tsx  # WS接続状態バー
 │   │   ├── VehicleMap.tsx       # Leaflet地図
 │   │   └── VehicleList.tsx      # 車両一覧パネル
 │   ├── constants/
@@ -148,17 +149,53 @@ type PositionStore = {
 ## 7. WebSocket接続フック仕様（`src/hooks/useVehicleWebSocket.ts`）
 
 ```ts
-export function useVehicleWebSocket(): void;
+export type WsStatus = "connecting" | "connected" | "reconnecting" | "failed";
+
+export function useVehicleWebSocket(): { status: WsStatus; nextRetryIn: number };
 ```
 
-- `useEffect` 内で `new WebSocket('ws://localhost:8080')` を確立
-- `onopen`: `console.log('WebSocket connected')` を出力
+### 環境変数
+
+| 変数名                  | 内容                        | デフォルト値           |
+| ----------------------- | --------------------------- | ---------------------- |
+| `VITE_WS_URL`           | WebSocket接続先URL          | `ws://localhost:8080`  |
+| `VITE_WS_MAX_TOTAL_MS`  | 再接続を試みる最大累計時間  | `30000`（30秒）        |
+
+### 通常動作
+
+- `useEffect` 内で `new WebSocket(VITE_WS_URL)` を確立
+- `onopen`: `retryCount` をリセットし `status` を `connected` にする
 - `onmessage`: `JSON.parse(event.data)` → `VehiclePosition` にキャスト → `setPosition` を呼ぶ
-- `onclose`: `console.log('WebSocket closed')` を出力
 - `onerror`: `console.error(error)` を出力
-- アンマウント時: `ws.close()` でクリーンアップ
-- 依存配列: `[updateVehicle]`（store の参照が変わった場合に再接続）
-- 再接続ロジック: なし（切断したらそのまま）
+- アンマウント時: `shouldReconnect` フラグを `false` にして `ws.close()`、タイマーをすべてキャンセル
+- 依存配列: `[updateVehicle]`
+
+### 再接続ロジック
+
+| 設定項目         | 値                                           |
+| ---------------- | -------------------------------------------- |
+| 再接続戦略       | Exponential backoff（`BASE_DELAY * 2^n` ms） |
+| `BASE_DELAY`     | 1000ms（固定値、コード定数）                 |
+| 上限             | 初回切断から累計 `VITE_WS_MAX_TOTAL_MS` 以内 |
+| 上限到達時の動作 | `status` を `failed` にして再試行停止        |
+
+**タイムライン例（MAX_TOTAL_MS=30秒の場合）**
+
+```
+t=0   切断
+t=1   1回目 再接続試行（+1秒後）
+t=3   2回目 再接続試行（+2秒後）
+t=7   3回目 再接続試行（+4秒後）
+t=15  4回目 再接続試行（+8秒後）
+t=30  → failed（次の+16秒待つと累計30秒超のため打ち切り）
+```
+
+**実装ポイント**
+
+- `shouldReconnect` フラグでアンマウントによる意図的な `ws.close()` と、サーバー起因の切断を区別する
+- `onopen` より前に `onclose` が発火するケース（サーバー不在）があるため、`shouldReconnect = true` は `connect()` 呼び出し前にセットする
+- `onclose` 時に `elapsed + nextDelay > MAX_TOTAL_MS` なら即 `failed`
+- カウントダウン表示用に `setInterval` で `nextRetryIn` を1秒ずつ減算する（`prev` を使う関数形式でクロージャの値キャプチャ問題を回避）
 
 ---
 
@@ -231,23 +268,40 @@ const VehiclesPage = lazy(() => import("./pages/VehiclesPage"));
 
 ### 9-5. VehiclesPage.tsx
 
-- `useVehicleWebSocket()` をマウント時に1回呼ぶ
-  - `/vehicles` に遷移したときだけ WebSocket 接続が確立される
-  - `/vehicles` から離脱（アンマウント）すると接続がクリーンアップされる
+- `useVehicleWebSocket()` をマウント時に1回呼び、`status` / `nextRetryIn` を受け取る
+- `/vehicles` に遷移したときだけ WebSocket 接続が確立される
+- `/vehicles` から離脱（アンマウント）すると接続がクリーンアップされ、再接続タイマーも停止する
 
 ```
 ┌──────────────────────────────────────────────────────┐
+│  ConnectionStatusBar（接続中・再接続中・失敗時のみ表示）│
+├──────────────────┬───────────────────────────────────┤
 │  VehicleList     │  VehicleMap                       │
 │  （左パネル）     │  （右：地図）                      │
 │  幅: w-70（280px）│  幅: 残り全部（flex-1）            │
 └──────────────────┴───────────────────────────────────┘
 ```
 
-- 外側: `flex h-full`
+- 外側: `flex flex-col h-full`
+- `ConnectionStatusBar` を最上部に配置
+- 内側コンテンツ: `flex flex-1 overflow-hidden`
 - 左パネル (`<aside>`): `w-70 shrink-0 overflow-y-auto border-r`
 - 右エリア (`<main>`): `flex-1`
 
-### 9-6. VehicleList.tsx
+### 9-6. ConnectionStatusBar.tsx
+
+- `status` が `connected` のときは `null` を返す（非表示）
+- それ以外は車両一覧の最上部に固定バーとして表示
+
+| status         | 背景色 | 表示メッセージ                                      |
+| -------------- | ------ | --------------------------------------------------- |
+| `connecting`   | 黄     | サーバーに接続中...                                 |
+| `reconnecting` | 黄     | サーバーと切断されました。再接続中... (`n`秒後)     |
+| `failed`       | 赤     | 接続できません。ページを再読み込みしてください。    |
+
+- `reconnecting` 時は `nextRetryIn` を使ってカウントダウンを表示する
+
+### 9-7. VehicleList.tsx
 
 Zustand の `positions` を `Array.from` で配列化して表示。
 
@@ -267,7 +321,7 @@ Zustand の `positions` を `Array.from` で配列化して表示。
   - カード背景: 車両色 + 透明度（`color + "18"`）
   - 車両ID文字色: 車両色
 
-### 9-7. VehicleMap.tsx
+### 9-8. VehicleMap.tsx
 
 - `react-leaflet` の `MapContainer` / `TileLayer` / `Marker` / `Popup` を使用
 - タイルレイヤー: OpenStreetMap（`https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png`）
@@ -331,6 +385,10 @@ function createColoredIcon(color: string): L.DivIcon {
 | 遅延ロード           | `/vehicles` 初回遷移時に VehiclesPage チャンクがフェッチされる      |
 | WebSocket 接続       | `/vehicles` 遷移時に WebSocket が接続される                         |
 | WebSocket 切断       | `/vehicles` から離脱すると WebSocket が切断される                   |
+| 再接続               | サーバー停止後、Exponential backoff で再接続を試みる                |
+| 再接続UI（黄）       | 再接続中に車両一覧上部に黄色バーとカウントダウンが表示される        |
+| 再接続UI（赤）       | 累計30秒経過後に赤バーが表示され、再試行が停止する                  |
+| 再接続成功           | サーバー再起動後に接続が回復し、バーが非表示になる                  |
 | 地図表示             | OpenStreetMap タイルが表示される                                    |
 | マーカー表示         | 3台分のカラーピンが地図上に表示される                               |
 | リアルタイム移動     | 1秒ごとにマーカー位置が更新される                                   |
@@ -341,7 +399,6 @@ function createColoredIcon(color: string): L.DivIcon {
 
 ## 12. スコープ外（今回実装しない）
 
-- WebSocket 再接続ロジック
 - エラー画面
 - 車両の走行履歴（軌跡）表示
 - 認証・セキュリティ
