@@ -22,7 +22,11 @@ const MAX_TOTAL_MS = Number(import.meta.env.VITE_WS_MAX_TOTAL_MS);
 //    → useVehicleWebSocketの戻り値に依存しているコンポーネントを再レンダリング
 // ■■■■■■■■■■■■■■■■■■■■■■■■■■■■
 
-export function useVehicleWebSocket(): {
+// getToken: WS チケットを取得する関数。null の場合は接続しない
+// 再接続のたびに呼び出されるため、毎回新しいチケットが発行される
+export function useVehicleWebSocket(
+  getToken: (() => Promise<string | null>) | null,
+): {
   status: WsStatus;
   nextRetryIn: number;
 } {
@@ -38,8 +42,13 @@ export function useVehicleWebSocket(): {
   const retryCount = useRef(0);
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const countdownTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  // async connect のため WebSocket インスタンスを ref で管理
+  const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
+    // getToken が null（未認証）の場合は接続しない
+    if (!getToken) return;
+
     // onopneで失敗しても、再接続させる
     shouldReconnect.current = true;
     startedAt.current = Date.now();
@@ -56,7 +65,7 @@ export function useVehicleWebSocket(): {
     // WebSocketの受信をReactが直接行うわけではない
     // 実際にWebSocketの通信を行うのはOSの仕事
     // OSへ向けて、
-    //    - WebSocketの接続先 :  new WebSocket(WS_URL)
+    //    - WebSocketの接続先 :  new WebSocket(wsUrl)
     //    - onopen 時の処理
     //    - onmessage 時の処理
     //    - onerror 時の処理
@@ -64,10 +73,24 @@ export function useVehicleWebSocket(): {
     // を登録して、後はOSの制御に任せる。
     // OSがWebSocketの受信を感知すると、onmessageが発火する
     // ■■■■■■■■■■■■■■■■■■■■■■■■■■■■
-    function connect() {
+    // -------------------------------------------------------
+    // getToken() で auth-server からワンタイムチケットを取得してから接続
+    // 再接続のたびに新しいチケットを発行（消費済みチケットは使えない）
+    // -------------------------------------------------------
+    async function connect() {
       setStatus(retryCount.current === 0 ? "connecting" : "reconnecting");
 
-      const ws = new WebSocket(WS_URL);
+      const ticket = await getToken!();
+      if (!ticket) {
+        // チケット取得失敗（セッション切れなど）は即失敗扱い
+        setStatus("failed");
+        return;
+      }
+
+      // ticket をクエリパラメーターとして付与（WS はカスタムヘッダー不可）
+      const wsUrl = `${WS_URL}?token=${ticket}`;
+      const ws = new WebSocket(wsUrl);
+      wsRef.current = ws;
 
       // ---------------------------------------------
       // WebSocket Open処理の登録
@@ -81,9 +104,26 @@ export function useVehicleWebSocket(): {
       // ---------------------------------------------
       // WebSocket メッセージの受信時処理の登録
       // ---------------------------------------------
-      ws.onmessage = (event) => {
-        const pos = JSON.parse(event.data as string) as VehiclePosition;
-        updateVehicle(pos);
+      // §13-15 の定期再認証メッセージ {type:"auth-renew"} を受け取ったら
+      // 新しいワンタイムチケットを取得して {type:"auth", ticket} で返す。
+      // type が無いメッセージは VehiclePosition として扱う（既存仕様）。
+      ws.onmessage = async (event) => {
+        const data = JSON.parse(event.data as string) as
+          | { type: "auth-renew" }
+          | VehiclePosition;
+
+        if ("type" in data && data.type === "auth-renew") {
+          const ticket = await getToken!();
+          if (!ticket) {
+            // セッション失効済み。サーバー側もタイムアウトで切断する
+            ws.close();
+            return;
+          }
+          ws.send(JSON.stringify({ type: "auth", ticket }));
+          return;
+        }
+
+        updateVehicle(data as VehiclePosition);
       };
 
       ws.onerror = (error) => console.error(error);
@@ -125,22 +165,20 @@ export function useVehicleWebSocket(): {
 
         // 再接続の実行（delay後に1回だけ）
         retryTimer.current = setTimeout(() => {
-          connect();
+          void connect();
         }, delay);
       };
-
-      return ws;
     }
 
-    const ws = connect();
+    void connect();
 
     // コンポーネントアンマウント時処理
     return () => {
       shouldReconnect.current = false;
       clearTimers();
-      ws.close();
+      wsRef.current?.close();
     };
-  }, [updateVehicle]);
+  }, [updateVehicle, getToken]);
 
   return { status, nextRetryIn };
 }
