@@ -1,110 +1,96 @@
+import { Hono } from "hono";
+import { serve } from "@hono/node-server";
+import { cors } from "hono/cors";
 import { WebSocketServer, WebSocket } from "ws";
-import type { IncomingMessage } from "http";
+import type { IncomingMessage, Server } from "http";
+import { auth } from "./auth.js";
 import type { VehiclePosition } from "../src/types/vehicle.js";
 
-const AUTH_URL = process.env.BETTER_AUTH_URL ?? "http://localhost:3000";
+// ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+// 統合サーバー（認証 + 車両位置 WebSocket）
+// ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
 
-// 定期再認証の設定（§13-15）
-const RENEW_INTERVAL_MS = 30_000; // 30秒ごとにクライアントへ再認証要求
-const RENEW_TIMEOUT_MS = 5_000;   // 5秒以内に応答が無ければ切断
+// 定期再認証の設定
+const RENEW_INTERVAL_MS = 30_000; // 30秒ごとにセッションを再検証
 
-// auth-server のチケット検証エンドポイントへ問い合わせ（ワンタイム消費）
-async function validateTicket(token: string): Promise<{ name: string } | null> {
-  try {
-    const res = await fetch(
-      `${AUTH_URL}/api/ws-token-validate?token=${encodeURIComponent(token)}`,
-    );
-    if (!res.ok) return null;
-    return (await res.json()) as { name: string } | null;
-  } catch (err) {
-    console.error("[WS] validate error:", err);
-    return null;
+// -------------------------------------------------------
+// IncomingMessage の headers を WHATWG Headers に変換
+// WS ハンドシェイク時の Cookie を auth.api.getSession に渡すために必要
+// -------------------------------------------------------
+function toHeaders(req: IncomingMessage): Headers {
+  const headers = new Headers();
+  for (const [key, value] of Object.entries(req.headers)) {
+    if (value !== undefined) {
+      headers.set(key, Array.isArray(value) ? value.join(", ") : value);
+    }
   }
+  return headers;
 }
 
-// サーバー全体（複数接続を束ねる）
-const wss = new WebSocketServer({ port: 8080 });
+// ----------------------------------------------------------------
+// Hono アプリ（認証エンドポイント）
+// ----------------------------------------------------------------
+
+const app = new Hono();
+
+// CORS許可対象 "/api/auth/*"
+// 許可のFROM AUTH_CORS_ORIGIN = Vite dev サーバー
+app.use(
+  "/api/auth/*",
+  cors({ origin: process.env.AUTH_CORS_ORIGIN!, credentials: true }),
+);
+
+// BetterAuth の全エンドポイントへの catch-all
+app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw));
+
+// ----------------------------------------------------------------
+// HTTP サーバー起動（BetterAuth + WS を同一ポートで提供）
+// ----------------------------------------------------------------
+const port = Number(process.env.AUTH_SERVER_PORT) || 3000;
+const httpServer = serve({ fetch: app.fetch, port }, () => {
+  console.log(`Server started on http://localhost:${port}`);
+}) as Server;
+
+// ----------------------------------------------------------------
+// WS サーバーを HTTP サーバーに統合
+// 同一オリジンのため、WS ハンドシェイク時にブラウザが Cookie を自動送信する
+// ----------------------------------------------------------------
+const wss = new WebSocketServer({ server: httpServer });
 
 // --------------------------------------------------------------
-// 新しいクライアントからのws接続確立で実行
-// token をクエリパラメーターで受け取り、auth-server で検証する
-// --------------------------------------------------------------
-// wsが送信する車両情報は機密情報とする
-// 接続時の検証に加え、§13-15 の定期再認証で接続後の生存も担保する
+// ① 新しいクライアントからの WS 接続確立時に実行
+// Cookie を直接検証するためチケット発行不要
 // --------------------------------------------------------------
 wss.on("connection", async (ws: WebSocket, req: IncomingMessage) => {
-  const url = new URL(req.url!, "ws://localhost:8080");
-  const token = url.searchParams.get("token");
+  const wsHeaders = toHeaders(req);
 
-  if (!token) {
-    ws.close(4001, "Unauthorized");
-    return;
-  }
-
-  console.log(`[WS] Connected token=${token.slice(0, 10)}...`);
-
-  const initial = await validateTicket(token);
+  // 接続時のセッション検証
+  const initial = await auth.api.getSession({ headers: wsHeaders });
   if (!initial) {
     ws.close(4001, "Unauthorized");
     return;
   }
-  console.log(`Client connected: ${initial.name}`);
+  console.log(`Client connected: ${initial.user.name}`);
 
   // -----------------------------------------------------------
   // 定期再認証（§13-15）
   // -----------------------------------------------------------
-  // - RENEW_INTERVAL_MS ごとに {type:"auth-renew"} を送信
-  // - 送信後 RENEW_TIMEOUT_MS 以内に {type:"auth", ticket} が
-  //   返らなければ close(4401)
-  // - チケット検証も auth-server へ問い合わせる（同じワンタイム経路）
+  // チケット方式と異なり、サーバー側で直接セッションを再検証する
+  // クライアントへのメッセージ送信・応答待ちが不要でシンプル
   // -----------------------------------------------------------
-  let renewTimeout: ReturnType<typeof setTimeout> | null = null;
-
-  const renewInterval = setInterval(() => {
+  const renewInterval = setInterval(async () => {
     if (ws.readyState !== WebSocket.OPEN) return;
 
-    ws.send(JSON.stringify({ type: "auth-renew" }));
-
-    renewTimeout = setTimeout(() => {
-      console.log(`[WS] auth renew timeout: ${initial.name}`);
-      ws.close(4401, "Auth renew timeout");
-    }, RENEW_TIMEOUT_MS);
+    const session = await auth.api.getSession({ headers: wsHeaders });
+    if (!session) {
+      console.log(`[WS] session expired: ${initial.user.name}`);
+      ws.close(4401, "Session expired");
+    }
   }, RENEW_INTERVAL_MS);
-
-  ws.on("message", async (raw) => {
-    let msg: { type?: string; ticket?: string };
-    try {
-      msg = JSON.parse(raw.toString()) as { type?: string; ticket?: string };
-    } catch {
-      return; // 不正 JSON は無視
-    }
-
-    if (msg.type !== "auth") return;
-
-    if (!msg.ticket) {
-      ws.close(4401, "Auth renew failed");
-      return;
-    }
-
-    const renewed = await validateTicket(msg.ticket);
-    if (!renewed) {
-      console.log(`[WS] auth renew rejected: ${initial.name}`);
-      ws.close(4401, "Auth renew failed");
-      return;
-    }
-
-    // タイムアウト解除（次の auth-renew まで生存延長）
-    if (renewTimeout) {
-      clearTimeout(renewTimeout);
-      renewTimeout = null;
-    }
-    console.log(`[WS] auth renewed: ${renewed.name}`);
-  });
 
   ws.on("close", () => {
     clearInterval(renewInterval);
-    if (renewTimeout) clearTimeout(renewTimeout);
-    console.log(`Client disconnected: ${initial.name}`);
+    console.log(`Client disconnected: ${initial.user.name}`);
   });
 });
 
@@ -147,4 +133,4 @@ startVehicle(0, 0);
 startVehicle(1, 333);
 startVehicle(2, 666);
 
-console.log("Vehicle WebSocket server started on ws://localhost:8080");
+console.log(`Vehicle WebSocket server started on ws://localhost:${port}`);

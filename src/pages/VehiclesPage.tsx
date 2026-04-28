@@ -1,16 +1,12 @@
 import { useVehicleWebSocket } from "../hooks/useVehicleWebSocket";
-import { useAuth } from "../hooks/useAuth";
 import { VehicleList } from "../components/VehicleList";
 import { VehicleMap } from "../components/VehicleMap";
 import { ConnectionStatusBar } from "../components/ConnectionStatusBar";
 
 export default function VehiclesPage() {
-  // fetchWsToken: 認証済みの場合のみ非null（WS チケット取得関数）
-  const { fetchWsToken } = useAuth();
-
   // WebSocketのstatusが変わった時に再レンダリング
-  // また、 nextRetryIn （残り何秒で再接続するのか？）も監視している
-  const { status } = useVehicleWebSocket(fetchWsToken);
+  // nextRetryIn （残り何秒で再接続するのか？）も取得できるがUIには表示しない
+  const { status } = useVehicleWebSocket();
 
   return (
     <div className="flex h-full flex-col">

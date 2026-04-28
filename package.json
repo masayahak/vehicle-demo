@@ -6,7 +6,6 @@
   "scripts": {
     "dev": "vite",
     "server": "tsx --env-file=.env server/vehicle-server.ts",
-    "auth-server": "tsx --env-file=.env server/auth-server.ts",
     "build": "tsc && vite build",
     "preview": "vite preview"
   },

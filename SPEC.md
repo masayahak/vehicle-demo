@@ -1,7 +1,7 @@
 # リアルタイム車両位置表示アプリ 詳細仕様書
 
 **作成日**: 2026-04-23  
-**更新日**: 2026-04-28  
+**更新日**: 2026-04-29  
 **目的**: Zustand / WebSocket / Leaflet / React Router / Code Splitting / BetterAuth の実践学習
 
 ---
@@ -28,9 +28,8 @@
 ```
 vehicle-demo/
 ├── server/
-│   ├── vehicle-server.ts        # 車両位置WebSocketサーバー（port 8080）
-│   ├── auth-server.ts           # 認証サーバー Hono エントリ（port 3000）
-│   ├── auth.ts                  # BetterAuth 設定（auth-server から参照）
+│   ├── vehicle-server.ts        # 統合サーバー Hono + BetterAuth + WebSocket（port 3000）
+│   ├── auth.ts                  # BetterAuth 設定（vehicle-server から参照）
 │   └── db/
 │       ├── index.ts             # Drizzle + NeonDB クライアント
 │       └── schema.ts            # Drizzle スキーマ
@@ -44,7 +43,7 @@ vehicle-demo/
 │   │   └── positionStore.ts     # Zustand store
 │   ├── hooks/
 │   │   ├── useVehicleWebSocket.ts
-│   │   └── useAuth.ts           # セッション取得・ログアウト・WSチケット取得
+│   │   └── useAuth.ts           # セッション取得・ログアウト
 │   ├── components/
 │   │   ├── NavBar.tsx           # 全ページ共通ヘッダー（ユーザー名・ログアウト含む）
 │   │   ├── AuthGuard.tsx        # 未認証なら /login へリダイレクト
@@ -96,7 +95,7 @@ export const VEHICLE_COLORS: Record<string, string> = {
 
 ### 概要
 
-- ポート: `8080`
+- ポート: `3000`（Hono + BetterAuth + WebSocket を統合）
 - プロトコル: WebSocket
 - 実行コマンド: `npx tsx server/vehicle-server.ts`
 
@@ -138,8 +137,7 @@ export const VEHICLE_COLORS: Record<string, string> = {
 
 - 複数クライアント同時接続に対応（`wss.clients` でブロードキャスト）
 - 接続・切断のログを `console.log` で出力
-- 接続時に URL クエリパラメーター `token` を要求し、auth-server の
-  `/api/ws-token-validate` でワンタイム検証する（詳細は §13-6）
+- 接続時にブラウザが自動送信する Cookie を `auth.api.getSession({ headers })` で直接検証する（詳細は §13-6）
   - 検証失敗時は `close(4001, "Unauthorized")`
   - 検証成功後はブロードキャスト対象に含める
 
@@ -165,15 +163,18 @@ type PositionStore = {
 ```ts
 export type WsStatus = "connecting" | "connected" | "reconnecting" | "failed";
 
-export function useVehicleWebSocket(): { status: WsStatus; nextRetryIn: number };
+export function useVehicleWebSocket(): {
+  status: WsStatus;
+  nextRetryIn: number;
+};
 ```
 
 ### 環境変数
 
-| 変数名                  | 内容                        | デフォルト値           |
-| ----------------------- | --------------------------- | ---------------------- |
-| `VITE_WS_URL`           | WebSocket接続先URL          | `ws://localhost:8080`  |
-| `VITE_WS_MAX_TOTAL_MS`  | 再接続を試みる最大累計時間  | `30000`（30秒）        |
+| 変数名                 | 内容                       | デフォルト値          |
+| ---------------------- | -------------------------- | --------------------- |
+| `VITE_WS_URL`          | WebSocket接続先URL         | `ws://localhost:3000` |
+| `VITE_WS_MAX_TOTAL_MS` | 再接続を試みる最大累計時間 | `30000`（30秒）       |
 
 ### 通常動作
 
@@ -217,12 +218,12 @@ t=30  → failed（次の+16秒待つと累計30秒超のため打ち切り）
 
 ### ルート定義
 
-| パス        | コンポーネント | 説明                                     |
-| ----------- | -------------- | ---------------------------------------- |
+| パス        | コンポーネント | 説明                                         |
+| ----------- | -------------- | -------------------------------------------- |
 | `/`         | `LandingPage`  | 学習用デモであることを示すランディングページ |
-| `/vehicles` | `VehiclesPage` | リアルタイム車両表示                     |
-| `/about`    | `AboutPage`    | このデモの概要・技術スタック説明         |
-| その他      | `<Navigate>`   | `/` へリダイレクト                       |
+| `/vehicles` | `VehiclesPage` | リアルタイム車両表示                         |
+| `/about`    | `AboutPage`    | このデモの概要・技術スタック説明             |
+| その他      | `<Navigate>`   | `/` へリダイレクト                           |
 
 ### コード分割
 
@@ -260,15 +261,36 @@ function LoginRoute() {
       <Suspense fallback={<Loading />}>
         <Routes>
           <Route path="/login" element={<LoginRoute />} />
-          <Route path="/" element={<AuthGuard><LandingPage /></AuthGuard>} />
-          <Route path="/vehicles" element={<AuthGuard><VehiclesPage /></AuthGuard>} />
-          <Route path="/about" element={<AuthGuard><AboutPage /></AuthGuard>} />
+          <Route
+            path="/"
+            element={
+              <AuthGuard>
+                <LandingPage />
+              </AuthGuard>
+            }
+          />
+          <Route
+            path="/vehicles"
+            element={
+              <AuthGuard>
+                <VehiclesPage />
+              </AuthGuard>
+            }
+          />
+          <Route
+            path="/about"
+            element={
+              <AuthGuard>
+                <AboutPage />
+              </AuthGuard>
+            }
+          />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Suspense>
     </div>
   </div>
-</BrowserRouter>
+</BrowserRouter>;
 ```
 
 - `<Suspense>` は `<Routes>` 全体を包む
@@ -323,10 +345,10 @@ function LoginRoute() {
   - `connecting` / `reconnecting` 中も緑のまま（最大30秒の誤差は許容）
   - ユーザーに関係のある情報は「完全に繋がらない」になった時だけ
 
-| status                              | 背景色     | ドット色 | 表示メッセージ                               |
-| ----------------------------------- | ---------- | -------- | -------------------------------------------- |
-| `connected` / `connecting` / `reconnecting` | 薄グリーン | 緑       | 接続中                                       |
-| `failed`                            | 薄赤       | 赤       | 接続できません。ページを再読み込みしてください。 |
+| status                                      | 背景色     | ドット色 | 表示メッセージ                                   |
+| ------------------------------------------- | ---------- | -------- | ------------------------------------------------ |
+| `connected` / `connecting` / `reconnecting` | 薄グリーン | 緑       | 接続中                                           |
+| `failed`                                    | 薄赤       | 赤       | 接続できません。ページを再読み込みしてください。 |
 
 - Props は `status: WsStatus` のみ（`nextRetryIn` は不要）
 
@@ -389,7 +411,6 @@ function createColoredIcon(color: string): L.DivIcon {
   "scripts": {
     "dev": "vite",
     "server": "tsx --env-file=.env server/vehicle-server.ts",
-    "auth-server": "tsx --env-file=.env server/auth-server.ts",
     "build": "tsc && vite build",
     "preview": "vite preview"
   }
@@ -400,14 +421,14 @@ function createColoredIcon(color: string): L.DivIcon {
 
 ## 10-1. VSCode 開発環境起動（F5）
 
-**F5 キー 1発で3サーバーを並列起動する。**
+**F5 キー 1発で2サーバーを並列起動する。**
 
 ### 構成ファイル
 
-| ファイル | 役割 |
-|---|---|
+| ファイル              | 役割                                             |
+| --------------------- | ------------------------------------------------ |
 | `.vscode/launch.json` | F5 の起動設定（Chrome デバッグ + preLaunchTask） |
-| `.vscode/tasks.json` | 起動タスクの定義 |
+| `.vscode/tasks.json`  | 起動タスクの定義                                 |
 
 ### launch.json
 
@@ -431,11 +452,10 @@ function createColoredIcon(color: string): L.DivIcon {
 ```
 F5
 └─ dev:all（sequence）
-     ├─ 1. kill-ports    ポート 3000 / 8080 / 5173 を強制解放
+     ├─ 1. kill-ports    ポート 3000 / 5173 を強制解放
      └─ 2. start-servers（parallel）
-           ├─ auth-server    npm run auth-server（port 3000）
-           ├─ mock-server    npm run server（port 8080）
-           └─ vite-dev       npm run dev（port 5173）
+           ├─ vehicle-server    npm run server（port 3000）
+           └─ vite-dev          npm run dev（port 5173）
 ```
 
 **kill-ports タスクを先行させる理由:**  
@@ -446,25 +466,25 @@ F5 を再押下するたびに前のプロセスが残り `EADDRINUSE` でサー
 
 ## 11. 動作確認の定義（完了条件）
 
-| 確認項目             | 期待する動作                                                         |
-| -------------------- | -------------------------------------------------------------------- |
-| ルーティング         | `/` / `/vehicles` / `/about` それぞれのページが表示される           |
-| 不正URL              | 未定義パスは `/` へリダイレクトされる                               |
-| ナビゲーション       | NavBar の現在ページリンクがアクティブスタイルで強調される           |
-| コード分割           | 初回ロード時 Network タブに VehiclesPage チャンクが含まれない       |
-| 遅延ロード           | `/vehicles` 初回遷移時に VehiclesPage チャンクがフェッチされる      |
-| WebSocket 接続       | `/vehicles` 遷移時に WebSocket が接続される                         |
-| WebSocket 切断       | `/vehicles` から離脱すると WebSocket が切断される                   |
-| 再接続               | サーバー停止後、Exponential backoff で再接続を試みる                |
-| 再接続UI             | 再接続中もステータスバーはグリーン（接続中）のまま変化しない        |
-| 再接続UI（赤）       | 累計30秒経過後にステータスバーが赤になり、再試行が停止する          |
-| 再接続成功           | サーバー再起動後に接続が回復し、ステータスバーはグリーンのまま      |
-| ガタつきなし         | 接続状態が変化しても車両一覧・地図エリアの高さが変わらない          |
-| 地図表示             | OpenStreetMap タイルが表示される                                    |
-| マーカー表示         | 3台分のカラーピンが地図上に表示される                               |
-| リアルタイム移動     | 1秒ごとにマーカー位置が更新される                                   |
-| 車両一覧             | 左パネルに3台の座標・同期時刻がリアルタイムで更新される             |
-| 色分け               | 車両ごとにピン色とリストカード色が一致している                      |
+| 確認項目         | 期待する動作                                                   |
+| ---------------- | -------------------------------------------------------------- |
+| ルーティング     | `/` / `/vehicles` / `/about` それぞれのページが表示される      |
+| 不正URL          | 未定義パスは `/` へリダイレクトされる                          |
+| ナビゲーション   | NavBar の現在ページリンクがアクティブスタイルで強調される      |
+| コード分割       | 初回ロード時 Network タブに VehiclesPage チャンクが含まれない  |
+| 遅延ロード       | `/vehicles` 初回遷移時に VehiclesPage チャンクがフェッチされる |
+| WebSocket 接続   | `/vehicles` 遷移時に WebSocket が接続される                    |
+| WebSocket 切断   | `/vehicles` から離脱すると WebSocket が切断される              |
+| 再接続           | サーバー停止後、Exponential backoff で再接続を試みる           |
+| 再接続UI         | 再接続中もステータスバーはグリーン（接続中）のまま変化しない   |
+| 再接続UI（赤）   | 累計30秒経過後にステータスバーが赤になり、再試行が停止する     |
+| 再接続成功       | サーバー再起動後に接続が回復し、ステータスバーはグリーンのまま |
+| ガタつきなし     | 接続状態が変化しても車両一覧・地図エリアの高さが変わらない     |
+| 地図表示         | OpenStreetMap タイルが表示される                               |
+| マーカー表示     | 3台分のカラーピンが地図上に表示される                          |
+| リアルタイム移動 | 1秒ごとにマーカー位置が更新される                              |
+| 車両一覧         | 左パネルに3台の座標・同期時刻がリアルタイムで更新される        |
+| 色分け           | 車両ごとにピン色とリストカード色が一致している                 |
 
 ---
 
@@ -480,28 +500,27 @@ F5 を再押下するたびに前のプロセスが残り `EADDRINUSE` でサー
 
 ### 13-1. 構成概要
 
-| サーバー | ポート | 役割 |
-|---|---|---|
-| React SPA (Vite) | 5173 | フロントエンド |
-| WS サーバー | 8080 | 車両位置配信（token 検証追加） |
-| 認証サーバー (Hono) | 3000 | BetterAuth + NeonDB |
+| サーバー                       | ポート | 役割                                                |
+| ------------------------------ | ------ | --------------------------------------------------- |
+| React SPA (Vite)               | 5173   | フロントエンド                                      |
+| 統合サーバー (Hono + BetterAuth) | 3000   | 認証（BetterAuth）+ 車両位置配信（WebSocket）統合 |
 
 ### 13-2. 技術スタック（追加分）
 
-| 役割 | 技術 |
-|---|---|
-| 認証ライブラリ | better-auth |
-| 認証サーバーフレームワーク | Hono |
-| ORM | Drizzle ORM |
-| DB | NeonDB (Serverless PostgreSQL) |
-| DB ドライバー | @neondatabase/serverless |
+| 役割                       | 技術                           |
+| -------------------------- | ------------------------------ |
+| 認証ライブラリ             | better-auth                    |
+| 認証サーバーフレームワーク | Hono                           |
+| ORM                        | Drizzle ORM                    |
+| DB                         | NeonDB (Serverless PostgreSQL) |
+| DB ドライバー              | @neondatabase/serverless       |
 
 ### 13-3. ロール定義
 
-| ロール | 説明 |
-|---|---|
-| `admin` | 管理者 |
-| `user` | 一般ユーザー |
+| ロール  | 説明         |
+| ------- | ------------ |
+| `admin` | 管理者       |
+| `user`  | 一般ユーザー |
 
 - ロールによる機能制限なし
 - NavBar にログインユーザー名とロールを表示
@@ -510,9 +529,8 @@ F5 を再押下するたびに前のプロセスが残り `EADDRINUSE` でサー
 
 ```
 server/
-├── auth.ts              # BetterAuth 設定（auth-server から参照）
-├── auth-server.ts       # Hono エントリーポイント（port 3000）
-├── vehicle-server.ts    # 既存 WS サーバー（port 8080）← token 検証追加
+├── auth.ts              # BetterAuth 設定（vehicle-server から参照）
+├── vehicle-server.ts    # 統合サーバー Hono + BetterAuth + WebSocket（port 3000）
 └── db/
     ├── index.ts         # Drizzle + NeonDB クライアント
     └── schema.ts        # Drizzle スキーマ（NeonDB の既存テーブルに合わせる）
@@ -524,8 +542,8 @@ src/
 │   ├── VehiclesPage.tsx
 │   └── AboutPage.tsx
 ├── hooks/
-│   ├── useAuth.ts                 # セッション取得・ログアウト・WS チケット取得
-│   └── useVehicleWebSocket.ts     # getToken 引数で再接続のたびにチケット取得
+│   ├── useAuth.ts                 # セッション取得・ログアウト
+│   └── useVehicleWebSocket.ts     # Cookie 自動送信で WS 接続
 ├── lib/
 │   └── auth-client.ts             # better-auth/react クライアント（authClient）
 └── components/
@@ -539,8 +557,8 @@ src/
 
 ```
 ① ユーザーが /login でメール + パスワードを入力
-② POST /api/auth/sign-in/email → auth server
-③ auth server が Cookie (better-auth.session_token) を発行
+② POST /api/auth/sign-in/email → vehicle-server (BetterAuth)
+③ Cookie (better-auth.session_token) を発行
 ④ React SPA が GET /api/auth/get-session → ユーザー情報取得
 ⑤ 全ページ表示（NavBar にユーザー名・ロール表示）
 ```
@@ -560,51 +578,48 @@ src/
 ③ /login にリダイレクト
 ```
 
-### 13-6. WS 接続のトークン認証（ワンタイムチケット方式）
+### 13-6. WS 接続の認証（Cookie 直接検証方式）
 
-WebSocket はカスタムヘッダーを送れないため、クエリパラメーターでトークンを渡す。  
-ただし BetterAuth のセッショントークンを直接ブラウザ JS から扱うことは避け、
-**短命ワンタイムチケット**を経由する。
+vehicle-server と認証機能が同一サーバー（port 3000）に統合されているため、
+WS 接続時にブラウザが自動送信する Cookie をサーバー内で直接検証できる。
+クエリパラメーターへのトークン付与やサーバー間通信は不要。
 
 ```
-ws://localhost:8080?token=<one-time-ticket>
+ws://localhost:3000
 ```
-
-**チケット仕様:**
-
-| 項目 | 値 |
-|---|---|
-| 形式 | `crypto.randomUUID()` の文字列 |
-| 有効期限 | 60秒 |
-| 消費 | ワンタイム（検証時に即削除） |
-| 保管 | auth-server のメモリ `Map` |
 
 **認証フロー:**
 
 ```
-① ログイン後、React SPA がボタン操作不要で
-   POST /api/auth/ws-token を credentials:include で叩く
-   - ブラウザは HttpOnly Cookie (better-auth.session_token) を自動送信
-② auth-server が auth.api.getSession でセッション検証
-   → 成功なら 60秒有効・ワンタイムの UUID（=ticket）を発行して返す
-③ React SPA が new WebSocket(`ws://localhost:8080?token=${ticket}`)
-④ vehicle-server が token クエリを取り出し、
-   GET /api/ws-token-validate?token=<ticket> を auth-server に問い合わせ
-   - auth-server は照合後にチケットを即削除（ワンタイム消費）
-⑤ 検証失敗 → WS 接続を即時クローズ（コード 4001）
-⑥ 検証成功 → 通常通り車両位置データを配信
+① React SPA が new WebSocket("ws://localhost:3000") を確立
+   - ブラウザは同一オリジンの Cookie (better-auth.session_token) を自動送信
+② vehicle-server が WS ハンドシェイク時に auth.api.getSession({ headers }) を呼び出す
+③ 検証失敗 → WS 接続を即時クローズ（コード 4001）
+④ 検証成功 → 通常通り車両位置データを配信
 ```
 
-**再接続時の扱い:**
+**認証フロー図:**
 
-- 再接続のたびに `useVehicleWebSocket` は `getToken()` を呼び、毎回新しいチケットを発行する
-- `useAuth` 側で `session` が無い場合は `getToken` を `null` にして接続自体を抑止する
+```mermaid
+sequenceDiagram
+    participant B as ブラウザ
+    participant S as 統合サーバー(3000)
+
+    B->>S: ① POST /api/auth/sign-in (email+password)
+    S-->>B: Cookie(session_token) 発行
+
+    B->>S: ② ws://localhost:3000（Cookie 自動送信）
+    S->>S: auth.api.getSession({ headers }) でセッション検証
+    Note over S: 検証失敗 → close(4001)
+
+    S-->>B: ③ 車両データ配信開始
+```
 
 > **設計意図:**
+>
 > - HttpOnly Cookie を JS から触らせない → XSS 耐性
-> - 長寿命トークンを URL クエリに載せない → ログ流出耐性
-> - ワンタイム + 60秒 TTL → リプレイ耐性
-> - 認証サーバーと配信サーバーの責務分離（vehicle-server は BetterAuth に依存しない）
+> - 認証と配信が同一サーバーのため、サーバー間通信・共有シークレット不要
+> - 接続ごとに Cookie を検証するため、セッション失効時は次の接続で即遮断
 
 ### 13-7. BetterAuth 設定（auth.ts）
 
@@ -622,37 +637,32 @@ export const auth = betterAuth({
   emailAndPassword: { enabled: true },
   session: {
     expiresIn: 60 * 60 * 24 * 7, // 7日間
-    updateAge:  60 * 60 * 24,    // 1日ごとに有効期限を更新
+    updateAge: 60 * 60 * 24, // 1日ごとに有効期限を更新
   },
   plugins: [admin()],
   trustedOrigins: [process.env.AUTH_CORS_ORIGIN!],
 });
 ```
 
-### 13-8. CORS 設定（auth-server.ts）
+### 13-8. CORS 設定（vehicle-server.ts）
 
 ```ts
-// /api/auth/* のみ CORS を許可（WSチケット系もここに含める設計）
+// /api/auth/* のみ CORS を許可
 app.use(
   "/api/auth/*",
   cors({ origin: process.env.AUTH_CORS_ORIGIN!, credentials: true }),
 );
 ```
 
-> 重要: WS チケット発行エンドポイント `/api/auth/ws-token` は
-> BetterAuth の catch-all `app.on(["GET","POST"], "/api/auth/*", ...)` より
-> **前**に登録する。Hono は登録順マッチのため、catch-all を先に登録すると
-> ws-token が呼ばれない。
-
 ### 13-9. ルーティング変更（React SPA）
 
-| パス | コンポーネント | 認証要否 |
-|---|---|---|
-| `/login` | `LoginPage` | 不要 |
-| `/` | `LandingPage` | 必要 |
-| `/vehicles` | `VehiclesPage` | 必要 |
-| `/about` | `AboutPage` | 必要 |
-| その他 | `<Navigate>` | - |
+| パス        | コンポーネント | 認証要否 |
+| ----------- | -------------- | -------- |
+| `/login`    | `LoginPage`    | 不要     |
+| `/`         | `LandingPage`  | 必要     |
+| `/vehicles` | `VehiclesPage` | 必要     |
+| `/about`    | `AboutPage`    | 必要     |
+| その他      | `<Navigate>`   | -        |
 
 - 認証チェックは `useAuth` フックで行い、未認証なら `/login` へリダイレクト
 - ログイン済みで `/login` にアクセスした場合は `/` へリダイレクト
@@ -674,14 +684,16 @@ app.use(
 
 ### 13-12. 環境変数（追加分）
 
-| 変数名 | 内容 | 利用側 |
-|---|---|---|
-| `DATABASE_URL` | NeonDB 接続文字列 | server/db |
-| `BETTER_AUTH_SECRET` | セッション署名用シークレット | server/auth.ts |
-| `BETTER_AUTH_URL` | 認証サーバーの公開URL（vehicle-server からの内部呼び出し先） | server 共通 |
-| `AUTH_SERVER_PORT` | 認証サーバー Listen ポート（既定 3000） | auth-server.ts |
-| `AUTH_CORS_ORIGIN` | CORS 許可オリジン（Vite dev: `http://localhost:5173`） | auth-server.ts / auth.ts |
-| `VITE_AUTH_API_URL` | フロントから叩く認証サーバーURL | Vite ビルド時注入 |
+| 変数名               | 内容                                                   | 利用側              |
+| -------------------- | ------------------------------------------------------ | ------------------- |
+| `DATABASE_URL`       | NeonDB 接続文字列                                      | server/db           |
+| `BETTER_AUTH_SECRET` | セッション署名用シークレット                           | server/auth.ts      |
+| `BETTER_AUTH_URL`    | サーバーの公開URL（BetterAuth 内部参照）               | server 共通         |
+| `AUTH_SERVER_PORT`   | サーバー Listen ポート（既定 3000）                    | vehicle-server.ts   |
+| `AUTH_CORS_ORIGIN`   | CORS 許可オリジン（Vite dev: `http://localhost:5173`） | vehicle-server.ts / auth.ts |
+| `VITE_AUTH_API_URL`  | フロントから叩く認証 API の URL                        | Vite ビルド時注入   |
+| `VITE_WS_URL`        | フロントの WebSocket 接続先 URL                        | Vite ビルド時注入   |
+| `VITE_WS_MAX_TOTAL_MS` | 再接続を試みる最大累計時間（既定 30000）             | Vite ビルド時注入   |
 
 ### 13-13. React SPA 認証のセキュリティ上の注意事項
 
@@ -694,12 +706,12 @@ React SPA はアクセス時に全ページのコードを含む JS バンドル
 GET /  →  index.html + JS バンドル（全ページのコードが含まれる）← 認証不要で誰でも取得可能
 ```
 
-| | 守れるか |
-|---|---|
-| ページの存在（`/admin` というルートがある等） | ❌ バンドルから読める |
-| UI の構造・コンポーネントのコード | ❌ バンドルから読める |
-| 車両位置データ（WS） | ✅ WSサーバーが token 検証 |
-| ユーザー情報（API） | ✅ 認証サーバーが session 検証 |
+|                                               | 守れるか                       |
+| --------------------------------------------- | ------------------------------ |
+| ページの存在（`/admin` というルートがある等） | ❌ バンドルから読める          |
+| UI の構造・コンポーネントのコード             | ❌ バンドルから読める          |
+| 車両位置データ（WS）                          | ✅ WSサーバーが token 検証     |
+| ユーザー情報（API）                           | ✅ 認証サーバーが session 検証 |
 
 #### 大前提：データを守る責務はすべてサーバー側にある
 
@@ -732,18 +744,15 @@ Next.js の Server Components はコードをサーバーで実行するため J
 
 ### 13-14. 動作確認の定義（追加分）
 
-| 確認項目 | 期待する動作 |
-|---|---|
-| 未認証アクセス | `/` アクセス時に `/login` へリダイレクト |
-| ログイン | メール+パスワードでログイン → トップページへ遷移 |
-| NavBar 表示 | ログイン後にユーザー名・ロールが表示される |
-| ログアウト | [ログアウト] クリックで `/login` へリダイレクト |
-| ログイン済みで /login | `/` へリダイレクト |
-| WS チケット発行 | `/vehicles` 遷移時に `POST /api/auth/ws-token` で UUID 取得 |
-| WS 認証成功 | 有効チケットで WS 接続 → 車両データ受信 |
-| WS 認証失敗（無効） | 不正な token で WS 接続 → 即時クローズ（4001） |
-| WS 認証失敗（再利用） | 一度消費したチケットでの再接続 → 即時クローズ（4001） |
-| WS 認証失敗（期限切れ） | 60秒経過後のチケットでの接続 → 即時クローズ（4001） |
+| 確認項目              | 期待する動作                                        |
+| --------------------- | --------------------------------------------------- |
+| 未認証アクセス        | `/` アクセス時に `/login` へリダイレクト            |
+| ログイン              | メール+パスワードでログイン → トップページへ遷移    |
+| NavBar 表示           | ログイン後にユーザー名・ロールが表示される          |
+| ログアウト            | [ログアウト] クリックで `/login` へリダイレクト     |
+| ログイン済みで /login | `/` へリダイレクト                                  |
+| WS 認証成功           | Cookie を持つ状態で WS 接続 → 車両データ受信        |
+| WS 認証失敗（未認証） | Cookie なし（未ログイン）で WS 接続 → 即時クローズ（4001） |
 
 ---
 
@@ -751,70 +760,34 @@ Next.js の Server Components はコードをサーバーで実行するため J
 
 #### 課題
 
-ワンタイムチケット方式は **接続時のみ**検証する。  
-そのため、一度確立した WS 接続は BetterAuth セッションが失効・banされても
-車両データ（機密情報）を配信し続けてしまう。
+接続時のセッション検証のみでは、一度確立した WS 接続は BetterAuth セッションが
+失効・ban されても車両データ（機密情報）を配信し続けてしまう。
 
 #### 仕様
 
-vehicle-server は接続中のクライアントへ定期的に新しいチケットを要求し、
-クライアント側は最新セッションから再発行されたチケットを返す。
+vehicle-server は接続中のクライアントに対して、定期的に `auth.api.getSession()` を
+サーバー側で呼び出してセッションを再検証する。クライアント側の関与は不要。
 
-| 項目 | 値 | 定数名 |
-|---|---|---|
+| 項目       | 値   | 定数名              |
+| ---------- | ---- | ------------------- |
 | 再認証間隔 | 30秒 | `RENEW_INTERVAL_MS` |
-| 再認証応答タイムアウト | 5秒 | `RENEW_TIMEOUT_MS` |
-
-#### メッセージ形式
-
-vehicle-server → client:
-```json
-{ "type": "auth-renew" }
-```
-
-client → vehicle-server:
-```json
-{ "type": "auth", "ticket": "<new-one-time-uuid>" }
-```
-
-通常の車両データには `type` フィールドを持たせない（既存仕様維持）。  
-クライアントは `data.type === "auth-renew"` のときのみ制御メッセージとして処理する。
 
 #### サーバー側フロー
 
 ```
-接続成功時:
+接続成功時（初回検証で取得した headers を保持）:
   setInterval(RENEW_INTERVAL_MS):
-    送信: { type: "auth-renew" }
-    setTimeout(RENEW_TIMEOUT_MS):
-      クライアントから {type:"auth"} を受け取っていなければ
-        ws.close(4401, "Auth renew timeout")
-
-  ws.on("message"):
-    if msg.type === "auth":
-      auth-server で msg.ticket を検証
-      失敗なら ws.close(4401, "Auth renew failed")
-      成功ならタイムアウト解除
+    auth.api.getSession({ headers }) を呼び出す
+    セッション無効 → ws.close(4401, "Session expired")
+    セッション有効 → 配信継続
 ```
 
-#### クライアント側フロー
-
-```
-ws.onmessage:
-  data = JSON.parse(event.data)
-  if data.type === "auth-renew":
-    ticket = await getToken()        // セッション有効なら新チケット取得
-    if !ticket: ws.close()           // セッション失効済み → 接続終了
-    ws.send(JSON.stringify({ type: "auth", ticket }))
-  else:
-    // 既存通り VehiclePosition として処理
-    updateVehicle(data)
-```
+クライアントへの制御メッセージ送信・クライアントからの応答は不要。  
+通常の車両データ配信のみ継続する。
 
 #### 動作確認の追加項目
 
-| 確認項目 | 期待する動作 |
-|---|---|
-| 定期再認証成功 | 30秒経過後も WS 接続が継続し、車両データが流れ続ける |
-| 定期再認証失敗（セッション失効） | サーバー側で session を削除すると次の auth-renew で 4401 切断 |
-| 定期再認証タイムアウト | クライアントが応答しなければ約35秒で 4401 切断 |
+| 確認項目                         | 期待する動作                                                           |
+| -------------------------------- | ---------------------------------------------------------------------- |
+| 定期再認証成功                   | 30秒経過後も WS 接続が継続し、車両データが流れ続ける                   |
+| 定期再認証失敗（セッション失効） | サーバー側で session を削除すると次の再認証タイミング（約30秒後）で 4401 切断 |
