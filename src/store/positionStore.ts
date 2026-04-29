@@ -9,7 +9,6 @@ type PositionStore = {
   setPosition: (pos: VehiclePosition) => void;
 };
 
-// 呼び出し側でsetPosition処理を実装
 export const usePositionStore = create<PositionStore>((set) => ({
   // ------------------------------------------
   // zustand の定番：取り出されるstoreしたい変数

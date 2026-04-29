@@ -1,73 +1,41 @@
-# React + TypeScript + Vite
+# リアルタイム車両位置表示デモ
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Zustand / WebSocket / Leaflet / React Router / BetterAuth の実践学習用プロジェクト。
 
-Currently, two official plugins are available:
+詳細仕様は [SPEC.md](SPEC.md) を参照。
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+---
 
-## React Compiler
+## 開発環境の起動（VSCode）
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+**F5 キー 1発で2サーバーを並列起動する。**
 
-## Expanding the ESLint configuration
+| ファイル              | 役割                                             |
+| --------------------- | ------------------------------------------------ |
+| `.vscode/launch.json` | F5 の起動設定（Chrome デバッグ + preLaunchTask） |
+| `.vscode/tasks.json`  | 起動タスクの定義                                 |
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+### タスク実行フロー
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```
+F5
+└─ dev:all（sequence）
+     ├─ 1. kill-ports    ポート 3000 / 5173 を強制解放
+     └─ 2. start-servers（parallel）
+           ├─ vehicle-server    npm run server（port 3000）
+           └─ vite-dev          npm run dev（port 5173）
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+**kill-ports タスクを先行させる理由:**
+F5 を再押下するたびに前のプロセスが残り `EADDRINUSE` でサーバーが起動失敗する。
+`fuser -k` で既存プロセスを強制終了してから起動することで、何度でも F5 で再起動できる。
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+---
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+## npm スクリプト（手動起動）
+
+```bash
+npm run dev     # Vite dev サーバー（port 5173）
+npm run server  # 統合サーバー（port 3000）
+npm run build   # プロダクションビルド
 ```
