@@ -7,7 +7,7 @@ import AboutPage from "./pages/AboutPage";
 import LoginPage from "./pages/LoginPage";
 import { useAuth } from "./hooks/useAuth";
 
-// VehiclesPage のみを遅延ロード対象とする
+// VehiclesPage は、遅延ロード対象とする
 const VehiclesPage = lazy(() => import("./pages/VehiclesPage"));
 
 // ログイン済みなら / へリダイレクト、未認証なら LoginPage を表示
@@ -28,7 +28,6 @@ function LoginRoute() {
 export default function App() {
   return (
     <BrowserRouter>
-      {/* flex-col: 列方向（縦方向）へ子要素を並べよ  */}
       <div className="flex flex-col h-screen">
         <NavBar />
         {/* flex-1: NavBar以外の残り全高さを占有。overflow-y-auto: エリア内だけでスクロール */}

@@ -1,7 +1,7 @@
 # リアルタイム車両位置表示アプリ 詳細仕様書
 
 **作成日**: 2026-04-23  
-**更新日**: 2026-04-29  
+**更新日**: 2026-04-30  
 **目的**: Zustand / WebSocket / Leaflet / React Router / Code Splitting / BetterAuth の実践学習
 
 ---
@@ -165,7 +165,6 @@ export type WsStatus = "connecting" | "connected" | "reconnecting" | "failed";
 
 export function useVehicleWebSocket(): {
   status: WsStatus;
-  nextRetryIn: number;
 };
 ```
 
@@ -210,7 +209,6 @@ t=30  → failed（次の+16秒待つと累計30秒超のため打ち切り）
 - `shouldReconnect` フラグでアンマウントによる意図的な `ws.close()` と、サーバー起因の切断を区別する
 - `onopen` より前に `onclose` が発火するケース（サーバー不在）があるため、`shouldReconnect = true` は `connect()` 呼び出し前にセットする
 - `onclose` 時に `elapsed + nextDelay > MAX_TOTAL_MS` なら即 `failed`
-- カウントダウン表示用に `setInterval` で `nextRetryIn` を1秒ずつ減算する（`prev` を使う関数形式でクロージャの値キャプチャ問題を回避）
 
 ---
 
@@ -315,7 +313,7 @@ function LoginRoute() {
 
 ### 9-5. VehiclesPage.tsx
 
-- `useVehicleWebSocket()` をマウント時に1回呼び、`status` / `nextRetryIn` を受け取る
+- `useVehicleWebSocket()` をマウント時に1回呼び、`status` を受け取る
 - `/vehicles` に遷移したときだけ WebSocket 接続が確立される
 - `/vehicles` から離脱（アンマウント）すると接続がクリーンアップされ、再接続タイマーも停止する
 
@@ -350,7 +348,7 @@ function LoginRoute() {
 | `connected` / `connecting` / `reconnecting` | 薄グリーン | 緑       | 接続中                                           |
 | `failed`                                    | 薄赤       | 赤       | 接続できません。ページを再読み込みしてください。 |
 
-- Props は `status: WsStatus` のみ（`nextRetryIn` は不要）
+- Props は `status: WsStatus` のみ
 
 ### 9-7. VehicleList.tsx
 

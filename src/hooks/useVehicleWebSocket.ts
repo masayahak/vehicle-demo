@@ -11,33 +11,29 @@ const MAX_TOTAL_MS = Number(import.meta.env.VITE_WS_MAX_TOTAL_MS);
 // ■■■■■■■■■■■■■■■■■■■■■■■■■■■■
 // カスタムフック（useStateを内包してラップしている）
 //   - status：WebSocketの接続状態が変更された場合
-//   - nextRetryIn：再接続までの残り時間が更新された場合
 // --------------------------------------------------------
 // 再レンダリングの要求には２種類の発火経路がある
 // ① OSがWebSocketの受信を検知した時
 //    受信内容をストアに格納
 //    → 各コンポーネントがストアに依存し再レンダリング
 // ② OSがWebSocketの切断を検知した時
-//    切断を確認し useState にて 接続状態などを更新
+//    切断を確認し useState にて 接続状態を更新
 //    → useVehicleWebSocketの戻り値に依存しているコンポーネントを再レンダリング
 // ■■■■■■■■■■■■■■■■■■■■■■■■■■■■
 
 export function useVehicleWebSocket(): {
   status: WsStatus;
-  nextRetryIn: number;
 } {
   // storeの更新関数を取り出し
   const updateVehicle = usePositionStore((s) => s.setPosition);
 
   // このカスタムフックを呼んでいるコンポーネントを再レンダリング
   const [status, setStatus] = useState<WsStatus>("connecting");
-  const [nextRetryIn, setNextRetryIn] = useState(0);
 
   const shouldReconnect = useRef(false); // 明示的な終了時:false 異常切断時:true
   const startedAt = useRef<number>(0);
   const retryCount = useRef(0);
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const countdownTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   // async connect のため WebSocket インスタンスを ref で管理
   const wsRef = useRef<WebSocket | null>(null);
 
@@ -49,7 +45,6 @@ export function useVehicleWebSocket(): {
 
     function clearTimers() {
       if (retryTimer.current) clearTimeout(retryTimer.current);
-      if (countdownTimer.current) clearInterval(countdownTimer.current);
     }
 
     // ■■■■■■■■■■■■■■■■■■■■■■■■■■■■
@@ -79,7 +74,6 @@ export function useVehicleWebSocket(): {
       ws.onopen = () => {
         retryCount.current = 0;
         setStatus("connected");
-        setNextRetryIn(0);
       };
 
       // ---------------------------------------------
@@ -87,13 +81,14 @@ export function useVehicleWebSocket(): {
       // ---------------------------------------------
       ws.onmessage = (event) => {
         const data = JSON.parse(event.data as string) as VehiclePosition;
+        // ストアの車両位置を更新
         updateVehicle(data);
       };
 
       ws.onerror = (error) => console.error(error);
 
       // ---------------------------------------------
-      // WebSocket Close処理の登録
+      // WebSocket Close処理の登録（異常切断含む）
       // ---------------------------------------------
       ws.onclose = () => {
         // 正常終了時はそのまま終了
@@ -114,20 +109,8 @@ export function useVehicleWebSocket(): {
         }
 
         retryCount.current++;
-        setNextRetryIn(Math.ceil(delay / 1_000));
 
-        // カウントダウン表示
-        countdownTimer.current = setInterval(() => {
-          setNextRetryIn((prev) => {
-            if (prev <= 1) {
-              clearInterval(countdownTimer.current!);
-              return 0;
-            }
-            return prev - 1;
-          });
-        }, 1_000);
-
-        // 再接続の実行（delay後に1回だけ）
+        // 再接続の実行（delay後に起動）
         retryTimer.current = setTimeout(() => {
           connect();
         }, delay);
@@ -144,5 +127,5 @@ export function useVehicleWebSocket(): {
     };
   }, [updateVehicle]);
 
-  return { status, nextRetryIn };
+  return { status };
 }

@@ -4,8 +4,7 @@ import { VehicleMap } from "../components/VehicleMap";
 import { ConnectionStatusBar } from "../components/ConnectionStatusBar";
 
 export default function VehiclesPage() {
-  // WebSocketのstatusが変わった時に再レンダリング
-  // nextRetryIn （残り何秒で再接続するのか？）も取得できるがUIには表示しない
+  // WebSocketのstatusが変わった時はページを再レンダリング
   const { status } = useVehicleWebSocket();
 
   return (
