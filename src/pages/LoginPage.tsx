@@ -1,5 +1,6 @@
 import { useActionState } from "react";
 import { useNavigate } from "react-router-dom";
+import { Loader2 } from "lucide-react";
 import { signIn } from "../lib/auth-client";
 
 export default function LoginPage() {
@@ -33,9 +34,20 @@ export default function LoginPage() {
 
   return (
     <div className="flex h-full items-center justify-center">
+      {isPending && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center backdrop-blur-sm bg-black/30">
+          <div className="bg-white rounded-xl shadow-xl px-10 py-8 flex flex-col items-center gap-4 max-w-sm w-full mx-4">
+            <Loader2 className="size-10 animate-spin text-indigo-600" />
+            <p className="text-sm text-slate-600 text-center">
+              コールドスタンバイの認証DBへ接続中です。
+              起動までしばらくお待ち下さい。
+            </p>
+          </div>
+        </div>
+      )}
       <form
         action={formAction}
-        className="flex flex-col gap-4 w-80 p-8 border border-gray-200 rounded-lg shadow-sm bg-white"
+        className="flex flex-col gap-4 w-100 p-8 border border-gray-200 rounded-lg shadow-sm bg-white"
       >
         <h1 className="text-xl font-bold">Vehicle Demo ログイン</h1>
         {error && <p className="text-red-600 text-sm">{error}</p>}
@@ -58,7 +70,7 @@ export default function LoginPage() {
           disabled={isPending}
           className="bg-blue-600 text-white py-2 rounded hover:bg-blue-700 disabled:opacity-50"
         >
-          {isPending ? "ログイン中..." : "ログイン"}
+          ログイン
         </button>
         <div className="mt-4 text-center text-sm text-muted-foreground">
           <p>テスト用のアカウントを用意しています。</p>
